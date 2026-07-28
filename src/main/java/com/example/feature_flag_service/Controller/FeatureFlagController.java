@@ -45,4 +45,5 @@ public class FeatureFlagController {
         service.delete(tenantId, id);
         return ResponseEntity.noContent().build();
     }
+
 }

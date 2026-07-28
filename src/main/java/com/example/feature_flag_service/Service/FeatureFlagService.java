@@ -1,5 +1,6 @@
 package com.example.feature_flag_service.Service;
 
+import com.example.feature_flag_service.DTO.EvalResponse;
 import com.example.feature_flag_service.DTO.FlagRequest;
 import com.example.feature_flag_service.DTO.FlagResponse;
 import com.example.feature_flag_service.Repository.FeatureFlagRepository;
@@ -55,5 +56,12 @@ public class FeatureFlagService {
     private FeatureFlag findOrThrow(String tenantId, UUID id) {
         return repo.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Flag not found"));
+    }
+    public EvalResponse evaluate(String tenantId, String flagName, String user) {
+        boolean on = repo.findByNameAndTenantId(flagName, tenantId)
+                .map(FeatureFlag::isEnabled)
+                .orElse(false); // unknown flag = off, don't error
+
+        return new EvalResponse(flagName, user, on);
     }
 }

@@ -4,7 +4,7 @@ A small multi-tenant feature-flag backend. Apps call `/eval` to decide
 whether a feature is on for a given user; flags are fully isolated per tenant.
 
 ## Stack
-Java 17, Spring Boot 3.3, Spring Data JPA, H2 (in-memory).
+Java 21, Spring Boot 4.1.0, Spring Data JPA, H2 (in-memory).
 
 ## Run it
 

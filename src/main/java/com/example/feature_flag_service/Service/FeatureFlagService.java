@@ -5,6 +5,7 @@ import com.example.feature_flag_service.DTO.FlagRequest;
 import com.example.feature_flag_service.DTO.FlagResponse;
 import com.example.feature_flag_service.Repository.FeatureFlagRepository;
 import com.example.feature_flag_service.entity.FeatureFlag;
+import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -48,6 +49,7 @@ public class FeatureFlagService {
         return FlagResponse.from(repo.save(flag));
     }
 
+    @Transactional
     public void delete(String tenantId, UUID id) {
         findOrThrow(tenantId, id); // 404 if not yours, don't leak existence
         repo.deleteByIdAndTenantId(id, tenantId);

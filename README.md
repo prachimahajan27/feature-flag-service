@@ -48,6 +48,7 @@ All require header: `X-Tenant-ID: <tenant>`
 | `enabled`          | boolean       | master switch — off overrides everything   |
 | `rolloutPercentage`| int (0–100)   | stable hash-based rollout                  |
 | `targetedUsers`    | set of string | always ON for these users if flag enabled  |
+| `version`          | long          | required on `PUT`, ignored on `POST` — see [Concurrency](#concurrency) |
 
 ## Evaluation logic
 
@@ -72,6 +73,21 @@ handler.
 `FeatureFlag` uses JPA optimistic locking (`@Version`). Two concurrent
 updates to the same flag: the second writer gets a `409 Conflict`
 instead of silently overwriting the first writer's change.
+
+This is enforced at two levels, not just one:
+- **API contract**: `PUT /flags/{id}` requires `version` in the request
+  body — the version you last read the flag with. Omitting it returns
+  `400`. Sending a stale version (one that's already been superseded by
+  another writer) returns `409`.
+- **DB-level backstop**: JPA's own `@Version` check on the entity, so
+  even a client that races past the explicit check can't silently
+  overwrite a concurrent change.
+
+**Update flow for a client:**
+1. `GET /flags/{id}` → note the returned `version`
+2. `PUT /flags/{id}` with that `version` in the body
+3. On `409`, re-fetch the flag (to get the current `version`) and retry
+   with your intended change reapplied on top
 
 ## Design notes
 - Unknown flag on `/eval` → returns `off` rather than an error, so a

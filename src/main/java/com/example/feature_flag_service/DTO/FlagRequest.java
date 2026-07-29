@@ -10,5 +10,6 @@ public record FlagRequest(
         @NotBlank(message = "Flag name is required") String name,
         boolean enabled,
         @Min(0) @Max(100) int rolloutPercentage,
-        Set<String> targetedUsers
+        Set<String> targetedUsers,
+        Long version
 ) {}

@@ -7,7 +7,7 @@
 curl -X POST http://localhost:8080/flags \
   -H "X-Tenant-ID: acme-corp" \
   -H "Content-Type: application/json" \
-  -d '{"name": "dark_mode", "enabled": true}'
+  -d '{"name": "dark_mode", "enabled": true, "rolloutPercentage": 100, "targetedUsers": []}'
 
 # Evaluate a flag for a user
 curl "http://localhost:8080/eval?flag=dark_mode&user=user-42" \

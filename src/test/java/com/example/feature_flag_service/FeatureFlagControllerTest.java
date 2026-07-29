@@ -47,7 +47,7 @@ class FeatureFlagControllerTest {
 
     @Test
     void createAndFetchFlag() throws Exception {
-        String body = objectMapper.writeValueAsString(new FlagRequest("dark_mode", true, 100, Set.of()));
+        String body = objectMapper.writeValueAsString(new FlagRequest("dark_mode", true, 100, Set.of(), null));
 
         String response = mockMvc.perform(post("/flags")
                         .header("X-Tenant-ID", TENANT_A)
@@ -72,7 +72,7 @@ class FeatureFlagControllerTest {
         mockMvc.perform(put("/flags/" + id)
                         .header("X-Tenant-ID", TENANT_A)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new FlagRequest("beta_feature", true, 100, Set.of()))))
+                        .content(objectMapper.writeValueAsString(new FlagRequest("beta_feature", true, 100, Set.of(), 0L))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true));
     }
@@ -159,6 +159,8 @@ class FeatureFlagControllerTest {
     @Test
     void concurrentUpdatesAreRejectedByOptimisticLock() throws Exception {
         UUID id = createFlag(TENANT_A, "concurrent_flag", true);
+        entityManager.flush();
+        entityManager.clear();
 
         FeatureFlag copyA = repo.findById(id).orElseThrow();
         entityManager.detach(copyA); // force copyB to be a separate instance, not the cached one
@@ -177,11 +179,31 @@ class FeatureFlagControllerTest {
         });
     }
 
+    @Test
+    void staleUpdateVersionReturns409() throws Exception {
+        UUID id = createFlag(TENANT_A, "versioned_flag", false);
+
+        FlagRequest firstEdit = new FlagRequest("versioned_flag", true, 100, Set.of(), 0L);
+        mockMvc.perform(put("/flags/" + id)
+                        .header("X-Tenant-ID", TENANT_A)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(firstEdit)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1));
+
+        FlagRequest staleEdit = new FlagRequest("versioned_flag", false, 0, Set.of(), 0L);
+        mockMvc.perform(put("/flags/" + id)
+                        .header("X-Tenant-ID", TENANT_A)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(staleEdit)))
+                .andExpect(status().isConflict());
+    }
+
     // --- Validation ---
 
     @Test
     void createWithBlankNameReturns400() throws Exception {
-        String body = objectMapper.writeValueAsString(new FlagRequest("", true, 0, Set.of()));
+        String body = objectMapper.writeValueAsString(new FlagRequest("", true, 0, Set.of(), null));
 
         mockMvc.perform(post("/flags")
                         .header("X-Tenant-ID", TENANT_A)
@@ -228,7 +250,7 @@ class FeatureFlagControllerTest {
         String response = mockMvc.perform(post("/flags")
                         .header("X-Tenant-ID", tenant)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new FlagRequest(name, enabled, 100, Set.of()))))
+                        .content(objectMapper.writeValueAsString(new FlagRequest(name, enabled, 100, Set.of(), null))))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).get("id").asText());
     }
@@ -238,7 +260,7 @@ class FeatureFlagControllerTest {
                         .header("X-Tenant-ID", tenant)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new FlagRequest(name, true, rolloutPercentage, Set.of()))))
+                                new FlagRequest(name, true, rolloutPercentage, Set.of(), null))))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).get("id").asText());
     }
@@ -249,7 +271,7 @@ class FeatureFlagControllerTest {
                         .header("X-Tenant-ID", tenant)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new FlagRequest(name, true, rolloutPercentage, targets))))
+                                new FlagRequest(name, true, rolloutPercentage, targets, null))))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).get("id").asText());
     }

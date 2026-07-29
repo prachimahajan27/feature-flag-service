@@ -15,6 +15,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -36,7 +37,7 @@ public class FeatureFlagService {
         flag.setEnabled(req.enabled());
         flag.setRolloutPercentage(req.rolloutPercentage());
         flag.setTargetedUsers(req.targetedUsers() != null ? req.targetedUsers() : Set.of());
-        return FlagResponse.from(repo.save(flag));
+        return FlagResponse.from(repo.saveAndFlush(flag));
     }
 
     public List<FlagResponse> list(String tenantId) {
@@ -48,13 +49,21 @@ public class FeatureFlagService {
         return FlagResponse.from(findOrThrow(tenantId, id));
     }
 
+    @Transactional
     public FlagResponse update(String tenantId, UUID id, FlagRequest req) {
         FeatureFlag flag = findOrThrow(tenantId, id);
+        if (req.version() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Flag version is required for updates");
+        }
+        if (!Objects.equals(flag.getVersion(), req.version())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Flag was modified by someone else — please refetch and retry");
+        }
         flag.setEnabled(req.enabled());
         flag.setRolloutPercentage(req.rolloutPercentage());
         flag.setTargetedUsers(req.targetedUsers() != null ? req.targetedUsers() : Set.of());
         flag.setUpdatedAt(Instant.now());
-        return FlagResponse.from(repo.save(flag));
+        return FlagResponse.from(repo.saveAndFlush(flag));
     }
 
     @Transactional
@@ -93,7 +102,7 @@ public class FeatureFlagService {
             byte[] hash = digest.digest((flagName + ":" + user).getBytes(StandardCharsets.UTF_8));
             int value = ((hash[0] & 0xFF) << 24) | ((hash[1] & 0xFF) << 16)
                     | ((hash[2] & 0xFF) << 8) | (hash[3] & 0xFF);
-            return Math.abs(value) % 100;
+            return Math.floorMod(value, 100);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e); // SHA-256 always available on JVM
         }

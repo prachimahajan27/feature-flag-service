@@ -47,7 +47,11 @@ a flag exists for a different tenant.
 
 - No auth — X-Tenant-ID is trusted as-is; a real service would derive
   tenant from an authenticated token, not a client-supplied header.
-- No percentage-based rollout or user-targeting rules, just global on/off.
+- Targeting is currently limited to explicit user IDs; with more time I would
+  add a structured attribute-rule model (for example, country or plan) and
+  validate its operators and values.
+- Optimistic locking is version-based and works for updates; I would extend
+  the same client-visible concurrency contract to deletes if the API grows.
 - Would revisit the on/off/default state model with more time, since the
   spec explicitly calls it out.
 - No caching layer on /eval, which would matter under real load.

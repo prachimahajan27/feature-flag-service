@@ -40,11 +40,24 @@ future endpoint forgets an explicit check.
 
 All require header: `X-Tenant-ID: <tenant>`
 
+### Evaluation and updates
+
+`POST /flags` accepts `name`, `enabled`, `rolloutPercentage` (0–100), and
+`targetedUsers`. Evaluation is fail-safe: a missing or disabled flag is off;
+an explicitly targeted user is on; otherwise the service uses a SHA-256 bucket
+of the flag name and user ID for a stable percentage rollout.
+
+Responses include a `version`. Send that same value in a `PUT /flags/{id}`
+body. An update with an old version returns `409 Conflict`, preventing one
+administrator from silently overwriting another's changes.
+
 ## Design notes
 - Unknown flag on `/eval` → returns `off` rather than an error, so a
   request never leaks whether a flag exists in another tenant.
 - `deleteByIdAndTenantId` / `findByIdAndTenantId` used everywhere instead
   of ID-only lookups, so isolation is structural, not just checked.
+- Request DTOs use Bean Validation, so invalid names and rollout values return
+  `400 Bad Request` with field errors.
 
 See `client-example.md` for a sample client integration.
 

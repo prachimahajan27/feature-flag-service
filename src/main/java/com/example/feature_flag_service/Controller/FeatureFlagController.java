@@ -3,6 +3,7 @@ package com.example.feature_flag_service.Controller;
 import com.example.feature_flag_service.DTO.FlagRequest;
 import com.example.feature_flag_service.DTO.FlagResponse;
 import com.example.feature_flag_service.Service.FeatureFlagService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,7 +21,7 @@ public class FeatureFlagController {
 
     @PostMapping
     public FlagResponse create(@RequestHeader("X-Tenant-ID") String tenantId,
-                               @RequestBody FlagRequest req) {
+                               @Valid @RequestBody FlagRequest req) {
         return service.create(tenantId, req);
     }
 
@@ -36,7 +37,7 @@ public class FeatureFlagController {
 
     @PutMapping("/{id}")
     public FlagResponse update(@RequestHeader("X-Tenant-ID") String tenantId,
-                               @PathVariable UUID id, @RequestBody FlagRequest req) {
+                               @PathVariable UUID id, @Valid @RequestBody FlagRequest req) {
         return service.update(tenantId, id, req);
     }
 

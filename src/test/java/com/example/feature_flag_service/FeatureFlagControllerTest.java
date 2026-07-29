@@ -1,20 +1,28 @@
 package com.example.feature_flag_service;
 
 import com.example.feature_flag_service.DTO.FlagRequest;
+import com.example.feature_flag_service.Repository.FeatureFlagRepository;
+import com.example.feature_flag_service.entity.FeatureFlag;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.Set;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-
-import java.util.UUID;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -28,12 +36,18 @@ class FeatureFlagControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private FeatureFlagRepository repo;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private static final String TENANT_A = "tenant-a";
     private static final String TENANT_B = "tenant-b";
 
     @Test
     void createAndFetchFlag() throws Exception {
-        String body = objectMapper.writeValueAsString(new FlagRequest("dark_mode", true));
+        String body = objectMapper.writeValueAsString(new FlagRequest("dark_mode", true, 100, Set.of()));
 
         String response = mockMvc.perform(post("/flags")
                         .header("X-Tenant-ID", TENANT_A)
@@ -58,7 +72,7 @@ class FeatureFlagControllerTest {
         mockMvc.perform(put("/flags/" + id)
                         .header("X-Tenant-ID", TENANT_A)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new FlagRequest("beta_feature", true))))
+                        .content(objectMapper.writeValueAsString(new FlagRequest("beta_feature", true, 100, Set.of()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true));
     }
@@ -96,7 +110,7 @@ class FeatureFlagControllerTest {
                 .andExpect(jsonPath("$.on").value(false));
     }
 
-    // --- The most important test: cross-tenant isolation ---
+    // --- Cross-tenant isolation ---
 
     @Test
     void tenantCannotReadAnotherTenantsFlag() throws Exception {
@@ -110,8 +124,6 @@ class FeatureFlagControllerTest {
     void tenantCannotEvalAnotherTenantsFlagAsOn() throws Exception {
         createFlag(TENANT_A, "secret_flag", true);
 
-        // Tenant B evaluating a same-named flag it never created must get "off",
-        // never leaking Tenant A's state
         mockMvc.perform(get("/eval")
                         .header("X-Tenant-ID", TENANT_B)
                         .param("flag", "secret_flag")
@@ -127,7 +139,6 @@ class FeatureFlagControllerTest {
         mockMvc.perform(delete("/flags/" + id).header("X-Tenant-ID", TENANT_B))
                 .andExpect(status().isNotFound());
 
-        // still exists for the real owner
         mockMvc.perform(get("/flags/" + id).header("X-Tenant-ID", TENANT_A))
                 .andExpect(status().isOk());
     }
@@ -143,12 +154,109 @@ class FeatureFlagControllerTest {
                 .andExpect(jsonPath("$[0].name").value("flag_a"));
     }
 
+    // --- Optimistic locking ---
+
+    @Test
+    void concurrentUpdatesAreRejectedByOptimisticLock() throws Exception {
+        UUID id = createFlag(TENANT_A, "concurrent_flag", true);
+
+        FeatureFlag copyA = repo.findById(id).orElseThrow();
+        entityManager.detach(copyA); // force copyB to be a separate instance, not the cached one
+
+        FeatureFlag copyB = repo.findById(id).orElseThrow();
+        entityManager.detach(copyB);
+
+        copyA.setEnabled(false);
+        repo.save(copyA);
+        entityManager.flush(); // version increments in DB here
+
+        copyB.setEnabled(true);
+        assertThrows(ObjectOptimisticLockingFailureException.class, () -> {
+            repo.save(copyB);
+            entityManager.flush(); // stale version -> conflict surfaces on flush
+        });
+    }
+
+    // --- Validation ---
+
+    @Test
+    void createWithBlankNameReturns400() throws Exception {
+        String body = objectMapper.writeValueAsString(new FlagRequest("", true, 0, Set.of()));
+
+        mockMvc.perform(post("/flags")
+                        .header("X-Tenant-ID", TENANT_A)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    // --- Rollout + targeting ---
+
+    @Test
+    void evalIsStableAcrossRepeatedCalls() throws Exception {
+        createFlagWithRollout(TENANT_A, "beta", 50);
+
+        String first = evalOnce(TENANT_A, "beta", "user-123");
+        String second = evalOnce(TENANT_A, "beta", "user-123");
+
+        assertEquals(first, second);
+    }
+
+    @Test
+    void targetedUserIsOnRegardlessOfRollout() throws Exception {
+        createFlagWithRolloutAndTargets(TENANT_A, "beta", 0, Set.of("vip-user"));
+
+        mockMvc.perform(get("/eval").header("X-Tenant-ID", TENANT_A)
+                        .param("flag", "beta").param("user", "vip-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.on").value(true));
+    }
+
+    @Test
+    void zeroRolloutAndNoTargetDefaultsOff() throws Exception {
+        createFlagWithRollout(TENANT_A, "beta", 0);
+
+        mockMvc.perform(get("/eval").header("X-Tenant-ID", TENANT_A)
+                        .param("flag", "beta").param("user", "random-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.on").value(false));
+    }
+
+    // --- Helpers ---
+
     private UUID createFlag(String tenant, String name, boolean enabled) throws Exception {
         String response = mockMvc.perform(post("/flags")
                         .header("X-Tenant-ID", tenant)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new FlagRequest(name, enabled))))
+                        .content(objectMapper.writeValueAsString(new FlagRequest(name, enabled, 100, Set.of()))))
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(objectMapper.readTree(response).get("id").asText());
+    }
+
+    private UUID createFlagWithRollout(String tenant, String name, int rolloutPercentage) throws Exception {
+        String response = mockMvc.perform(post("/flags")
+                        .header("X-Tenant-ID", tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new FlagRequest(name, true, rolloutPercentage, Set.of()))))
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(response).get("id").asText());
+    }
+
+    private UUID createFlagWithRolloutAndTargets(String tenant, String name, int rolloutPercentage,
+                                                 Set<String> targets) throws Exception {
+        String response = mockMvc.perform(post("/flags")
+                        .header("X-Tenant-ID", tenant)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new FlagRequest(name, true, rolloutPercentage, targets))))
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(response).get("id").asText());
+    }
+
+    private String evalOnce(String tenant, String flag, String user) throws Exception {
+        return mockMvc.perform(get("/eval").header("X-Tenant-ID", tenant)
+                        .param("flag", flag).param("user", user))
+                .andReturn().getResponse().getContentAsString();
     }
 }

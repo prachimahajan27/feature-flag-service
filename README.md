@@ -40,24 +40,46 @@ future endpoint forgets an explicit check.
 
 All require header: `X-Tenant-ID: <tenant>`
 
-### Evaluation and updates
+### Flag fields
 
-`POST /flags` accepts `name`, `enabled`, `rolloutPercentage` (0–100), and
-`targetedUsers`. Evaluation is fail-safe: a missing or disabled flag is off;
-an explicitly targeted user is on; otherwise the service uses a SHA-256 bucket
-of the flag name and user ID for a stable percentage rollout.
+| Field              | Type          | Notes                                      |
+|--------------------|---------------|---------------------------------------------|
+| `name`             | string        | required, non-blank                        |
+| `enabled`          | boolean       | master switch — off overrides everything   |
+| `rolloutPercentage`| int (0–100)   | stable hash-based rollout                  |
+| `targetedUsers`    | set of string | always ON for these users if flag enabled  |
 
-Responses include a `version`. Send that same value in a `PUT /flags/{id}`
-body. An update with an old version returns `409 Conflict`, preventing one
-administrator from silently overwriting another's changes.
+## Evaluation logic
+
+`GET /eval?flag=X&user=Y` resolves in this order:
+1. Flag doesn't exist for this tenant → **off** (never leaks existence)
+2. Flag disabled (`enabled=false`) → **off**
+3. User is in `targetedUsers` → **on** (targeting always wins)
+4. `rolloutPercentage >= 100` → **on**
+5. Otherwise → deterministic SHA-256 hash of `flag+user` bucketed 0–99,
+   compared against `rolloutPercentage`. Same user + same flag always
+   gets the same answer — no randomness, no per-call flapping.
+6. `rolloutPercentage == 0` and not targeted → **off** (safe default)
+
+## Validation
+
+Blank/missing flag name returns `400` (not the DB-constraint 500 it used
+to). Handled via `@NotBlank` + a `@RestControllerAdvice` global exception
+handler.
+
+## Concurrency
+
+`FeatureFlag` uses JPA optimistic locking (`@Version`). Two concurrent
+updates to the same flag: the second writer gets a `409 Conflict`
+instead of silently overwriting the first writer's change.
 
 ## Design notes
 - Unknown flag on `/eval` → returns `off` rather than an error, so a
   request never leaks whether a flag exists in another tenant.
 - `deleteByIdAndTenantId` / `findByIdAndTenantId` used everywhere instead
   of ID-only lookups, so isolation is structural, not just checked.
-- Request DTOs use Bean Validation, so invalid names and rollout values return
-  `400 Bad Request` with field errors.
+- Rollout bucketing uses SHA-256 rather than `Object.hashCode()` or
+  similar, to guarantee deterministic results across JVM restarts.
 
 See `client-example.md` for a sample client integration.
 

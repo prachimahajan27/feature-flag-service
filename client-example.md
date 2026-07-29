@@ -3,11 +3,16 @@
 ### cURL
 
 ```bash
-# Create a flag
+# Create a flag with a 50% rollout and a couple of always-on target users
 curl -X POST http://localhost:8080/flags \
   -H "X-Tenant-ID: acme-corp" \
   -H "Content-Type: application/json" \
-  -d '{"name": "dark_mode", "enabled": true, "rolloutPercentage": 100, "targetedUsers": []}'
+  -d '{
+    "name": "dark_mode",
+    "enabled": true,
+    "rolloutPercentage": 50,
+    "targetedUsers": ["internal-tester-1", "vip-user-9"]
+  }'
 
 # Evaluate a flag for a user
 curl "http://localhost:8080/eval?flag=dark_mode&user=user-42" \
@@ -42,3 +47,7 @@ if (client.isEnabled("dark_mode", "user-42")) {
     // show new UI
 }
 ```
+
+Note: `isEnabled` is stable for a given `(flagName, userId)` pair — calling
+it repeatedly for the same user won't flip the answer as long as the
+flag's rollout percentage and targeting haven't changed.
